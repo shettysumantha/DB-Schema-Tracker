@@ -3,11 +3,11 @@ from typing import List
 
 # PostgreSQL configuration (single source of truth)
 DB_CONFIG = {
-    "host": "10.0.1.32",
+    "host": "localhost",
     "port": 5432,
-    "database": "gas_malaysia",
-    "user": "gas_malaysia_user",
-    "password": "!£zQK9A6W23&",
+    "database": "MyDatabase",
+    "user": "postgres",
+    "password": "Shetty123@",
 }
 
 # Initial Cash Counter table scope (seed list)
