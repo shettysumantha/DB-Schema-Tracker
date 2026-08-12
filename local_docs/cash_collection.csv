@@ -1,0 +1,6 @@
+Column Name,Data Type,Nullable,Primary Key,Foreign Key,Referenced Table,Referenced Column,Default Value,Description
+cash_collection_id,integer,NO,YES,,,,nextval('cash_collection_cash_collection_id_seq'::regclass),
+cashier_id,integer,YES,,,,,,
+grand_total,"numeric(10,2)",YES,,,,,,
+cash_collection_date,date,YES,,,,,,
+sub_cash_counter_id,integer,YES,,,,,,

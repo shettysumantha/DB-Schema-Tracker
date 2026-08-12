@@ -1,0 +1,6 @@
+# Ignore Google service account credentials
+google_credentials.json
+
+# Python
+__pycache__/
+*.pyc
