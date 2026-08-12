@@ -1,11 +1,11 @@
 import logging
 from datetime import datetime
 
-from config import DB_CONFIG, CASH_COUNTER_TABLES
-from schema_analyzer import detect_cashcounter_tables, build_current_schema
-from schema_comparator import compare_table_schema
+from connection_manager import load_connections
+from schema_analyzer import list_database_tables, build_current_schema
 from google_sheets import GoogleSheetsClient
 from local_writer import LocalSheetsClient
+from schema_comparator import compare_table_schema
 import sys
 
 
@@ -52,13 +52,14 @@ def main():
         mode = "local"
 
     logger.info("Starting Cash Counter database schema synchronization (mode=%s)", mode)
-    logger.info("Database: Host : %s  Database : %s", DB_CONFIG["host"], DB_CONFIG["database"]) 
+    if not connections:
+        logger.error("No configured database connections found.")
+        return
+    connection = connections[0]
+    logger.info("Database: Host : %s  Database : %s", connection["host"], connection["database"])
 
-    # detect tables
-    detected = detect_cashcounter_tables()
-
-    # Build current schema
-    current_schema = build_current_schema(detected)
+    tables = list_database_tables(connection)
+    current_schema = build_current_schema(connection, tables)
 
     # existing sheet tabs (use client's list_sheets to handle retries)
     existing_sheets = set(gs.list_sheets())
@@ -128,8 +129,8 @@ def main():
     readme = [
         "Cash Counter – Database Documentation",
         "",
-        f"Database Host: {DB_CONFIG['host']}",
-        f"Database Name: {DB_CONFIG['database']}",
+        f"Database Host: {connection['host']}",
+        f"Database Name: {connection['database']}",
         "Module: Cash Counter",
         "",
         "Tables:",
@@ -144,8 +145,8 @@ def main():
     print("==================================================")
     print()
     print("Database:")
-    print(f"Host       : {DB_CONFIG['host']}")
-    print(f"Database   : {DB_CONFIG['database']}")
+    print(f"Host       : {connection['host']}")
+    print(f"Database   : {connection['database']}")
     print("Module     : Cash Counter")
     print()
     print(f"Tables checked       : {summary['tables_checked']}")

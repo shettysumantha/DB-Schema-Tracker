@@ -283,3 +283,47 @@ class GoogleSheetsClient:
             self.spreadsheet.del_worksheet(ws)
         except APIError:
             logger.exception("Failed to delete sheet %s", title)
+
+    def update_documentation(self, connection_name: str, schema_map: Dict[str, List[Dict[str, Any]]]):
+        readme_lines = [
+            "Database Schema Documentation",
+            "",
+            f"Connection: {connection_name}",
+            "",
+            "This spreadsheet contains generated schema documentation for the selected tables.",
+            "",
+            "Included tables:",
+        ]
+        for table_name in sorted(schema_map.keys()):
+            readme_lines.append(f"- {table_name}")
+
+        self.update_readme(readme_lines)
+
+        index_rows = []
+        rel_rows = []
+        for table_name, columns in schema_map.items():
+            pk_columns = [c["column_name"] for c in columns if c.get("is_primary")]
+            fk_columns = [c["column_name"] for c in columns if c.get("foreign_key")]
+            index_rows.append([
+                table_name,
+                "",
+                len(columns),
+                ", ".join(pk_columns) if pk_columns else "-",
+                ", ".join(fk_columns) if fk_columns else "-",
+            ])
+            for c in columns:
+                fk = c.get("foreign_key")
+                if fk:
+                    rel_rows.append([
+                        table_name,
+                        c.get("column_name"),
+                        fk.get("referenced_table"),
+                        fk.get("referenced_column"),
+                        fk.get("constraint_name"),
+                    ])
+
+        self.update_table_index(index_rows)
+        self.update_table_relationships(rel_rows)
+
+        for table_name, columns in schema_map.items():
+            self.update_table_sheet(table_name, columns)

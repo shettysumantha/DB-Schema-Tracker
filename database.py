@@ -1,25 +1,30 @@
 import psycopg2
 from psycopg2.extras import RealDictCursor
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from contextlib import contextmanager
 import logging
 
-from config import DB_CONFIG, PUBLIC_SCHEMA
+from config import PUBLIC_SCHEMA
 
 logger = logging.getLogger(__name__)
 
 
+def _build_connection_params(connection_data: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "host": connection_data["host"],
+        "port": connection_data["port"],
+        "dbname": connection_data["database"],
+        "user": connection_data.get("username", connection_data.get("user")),
+        "password": connection_data["password"],
+    }
+
+
 @contextmanager
-def get_connection():
+def get_connection_from(connection_record: Dict[str, Any]):
     conn = None
     try:
-        conn = psycopg2.connect(
-            host=DB_CONFIG["host"],
-            port=DB_CONFIG["port"],
-            database=DB_CONFIG["database"],
-            user=DB_CONFIG["user"],
-            password=DB_CONFIG["password"],
-        )
+        params = _build_connection_params(connection_record)
+        conn = psycopg2.connect(**params)
         yield conn
     except Exception:
         logger.exception("PostgreSQL connection failed")
@@ -29,22 +34,60 @@ def get_connection():
             conn.close()
 
 
-def list_all_tables() -> List[str]:
+def test_connection(connection_data: Dict[str, Any]) -> None:
+    with psycopg2.connect(**_build_connection_params(connection_data)) as conn:
+        with conn.cursor():
+            pass
+
+
+def list_tables(connection_record: Dict[str, Any], schema: Optional[str] = None, limit: int = 100) -> List[str]:
+    schema = schema or connection_record.get("schema") or PUBLIC_SCHEMA
     query = """
     SELECT table_name
     FROM information_schema.tables
     WHERE table_schema = %s
       AND table_type = 'BASE TABLE'
     ORDER BY table_name
+    LIMIT %s
     """
-    with get_connection() as conn:
+    with get_connection_from(connection_record) as conn:
         with conn.cursor() as cur:
-            cur.execute(query, (PUBLIC_SCHEMA,))
+            cur.execute(query, (schema, limit))
             return [r[0] for r in cur.fetchall()]
 
 
-def get_table_columns(table_name: str) -> List[Dict[str, Any]]:
-    """Return detailed column metadata for a table."""
+def search_tables(connection_record: Dict[str, Any], q: str, exact: bool = False, limit: int = 50) -> List[str]:
+    schema = connection_record.get("schema") or PUBLIC_SCHEMA
+    if exact:
+        query = """
+        SELECT table_name
+        FROM information_schema.tables
+        WHERE table_schema = %s
+          AND table_type = 'BASE TABLE'
+          AND table_name = %s
+        ORDER BY table_name
+        LIMIT 1
+        """
+        params = (schema, q)
+    else:
+        query = """
+        SELECT table_name
+        FROM information_schema.tables
+        WHERE table_schema = %s
+          AND table_type = 'BASE TABLE'
+          AND table_name ILIKE %s
+        ORDER BY table_name
+        LIMIT %s
+        """
+        params = (schema, f"%{q}%", limit)
+    with get_connection_from(connection_record) as conn:
+        with conn.cursor() as cur:
+            cur.execute(query, params)
+            return [r[0] for r in cur.fetchall()]
+
+
+def get_table_columns(connection_record: Dict[str, Any], table_name: str) -> List[Dict[str, Any]]:
+    schema = connection_record.get("schema") or PUBLIC_SCHEMA
     cols_query = """
     SELECT
       a.attnum as ordinal_position,
@@ -78,44 +121,42 @@ def get_table_columns(table_name: str) -> List[Dict[str, Any]]:
     JOIN information_schema.key_column_usage kcu
       ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema
     JOIN information_schema.constraint_column_usage ccu
-      ON tc.constraint_name = ccu.constraint_name AND tc.table_schema = ccu.constraint_schema
+      ON tc.constraint_name = ccu.constraint_name AND tc.constraint_schema = ccu.constraint_schema
     WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_name = %s AND tc.table_schema = %s
     """
 
-    with get_connection() as conn:
+    with get_connection_from(connection_record) as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(cols_query, (table_name, PUBLIC_SCHEMA))
+            cur.execute(cols_query, (table_name, schema))
             columns = cur.fetchall()
 
-            cur.execute(pk_query, (table_name, PUBLIC_SCHEMA))
+            cur.execute(pk_query, (table_name, schema))
             pk_rows = cur.fetchall()
             if pk_rows and isinstance(pk_rows[0], dict):
-              pk_columns = {r.get("column_name") for r in pk_rows if r.get("column_name")}
+                pk_columns = {r.get("column_name") for r in pk_rows if r.get("column_name")}
             else:
-              pk_columns = {r[0] for r in pk_rows}
+                pk_columns = {r[0] for r in pk_rows}
 
-            cur.execute(fk_query, (table_name, PUBLIC_SCHEMA))
+            cur.execute(fk_query, (table_name, schema))
             fk_rows = cur.fetchall()
             fk_map = {}
             for r in fk_rows:
-              # support both dict-like and tuple rows
-              if isinstance(r, dict):
-                col = r.get("column_name")
-                foreign_table = r.get("foreign_table_name")
-                foreign_column = r.get("foreign_column_name")
-                constraint = r.get("constraint_name")
-              else:
-                col = r[0]
-                foreign_table = r[1]
-                foreign_column = r[2]
-                constraint = r[3]
-
-              if col:
-                fk_map[col] = {
-                  "referenced_table": foreign_table,
-                  "referenced_column": foreign_column,
-                  "constraint_name": constraint,
-                }
+                if isinstance(r, dict):
+                    col = r.get("column_name")
+                    foreign_table = r.get("foreign_table_name")
+                    foreign_column = r.get("foreign_column_name")
+                    constraint = r.get("constraint_name")
+                else:
+                    col = r[0]
+                    foreign_table = r[1]
+                    foreign_column = r[2]
+                    constraint = r[3]
+                if col:
+                    fk_map[col] = {
+                        "referenced_table": foreign_table,
+                        "referenced_column": foreign_column,
+                        "constraint_name": constraint,
+                    }
 
     result = []
     for c in columns:
@@ -134,3 +175,5 @@ def get_table_columns(table_name: str) -> List[Dict[str, Any]]:
         )
 
     return result
+
+
