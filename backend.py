@@ -31,13 +31,14 @@ app.add_middleware(
 
 
 class DatabaseConnectionCreate(BaseModel):
+    id: Optional[str] = None
     name: str = Field(..., min_length=1)
     type: str = Field(...)
     host: str = Field(..., min_length=1)
     port: int = Field(default=5432)
     database: str = Field(..., min_length=1)
     username: str = Field(..., min_length=1)
-    password: str = Field(..., min_length=1)
+    password: Optional[str] = Field(default="")
     schema: str = Field(default="public")
 
     @validator("name", "host", "database", "username", "password", "schema", pre=True)
@@ -101,6 +102,27 @@ def api_save_database(connection: DatabaseConnectionCreate) -> Dict[str, Any]:
 @app.get("/api/databases")
 def api_list_databases() -> List[Dict[str, Any]]:
     return connection_manager.list_connections()
+
+
+@app.put("/api/databases/{connection_id}/connect")
+def api_connect_database(connection_id: str) -> Dict[str, Any]:
+    connection_record = connection_manager.get_connection_record(connection_id)
+    if not connection_record:
+        raise HTTPException(status_code=404, detail="Database connection not found")
+    try:
+        test_connection(connection_record)
+        updated = connection_manager.set_connection_status(connection_id, True)
+        return updated
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc) or "Unable to connect to database")
+
+
+@app.put("/api/databases/{connection_id}/disconnect")
+def api_disconnect_database(connection_id: str) -> Dict[str, Any]:
+    try:
+        return connection_manager.set_connection_status(connection_id, False)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
 
 
 @app.delete("/api/databases/{connection_id}")

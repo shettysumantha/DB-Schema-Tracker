@@ -265,13 +265,13 @@ python sync_cashcounter_schema.py
 2. **Add a Database Connection**
    - Click **+ Add Database**
    - Fill in connection details:
-     - Name: `gas_malaysia`
-     - Host: `10.0.1.32`
-     - Port: `5432`
-     - Database: `gas_malaysia`
-     - Username: `gas_malaysia_user`
-     - Password: `your_password`
-     - Schema: `public`
+     - Name: ``
+     - Host: ``
+     - Port: ``
+     - Database: ``
+     - Username: ``
+     - Password: ``
+     - Schema: ``
    - Click **Test Connection**
    - Click **Save Database**
 
