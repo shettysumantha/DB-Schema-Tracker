@@ -21,6 +21,12 @@ from google_sheets import GoogleSheetsClient
 
 app = FastAPI(title="Database Schema Documentation API", version="1.0")
 
+
+@app.get("/")
+def root() -> Dict[str, str]:
+    return {"status": "ok", "message": "Backend is running", "docs": "/docs"}
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
