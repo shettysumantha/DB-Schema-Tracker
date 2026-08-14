@@ -3,10 +3,23 @@ google_credentials.json
 
 # Python
 __pycache__/
-*.pyc
+*.py[cod]
+*.pyo
+*.pyd
 
-# Frontend dependencies
-frontend/node_modules/
-
-# Generated downloads
+# Generated data
+connections.json
+jobs.json
 downloads/
+local_docs/
+
+# Node / frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+node_modules/
+dist/
+
+# Environment files
+.env
+.env.*
