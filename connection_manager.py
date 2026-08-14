@@ -52,34 +52,41 @@ def list_connections() -> List[Dict[str, Any]]:
 
 
 def save_connection(connection_data: Dict[str, Any]) -> Dict[str, Any]:
-    connections = load_connections()
-    if connection_data["type"] not in SUPPORTED_DB_TYPES:
-        raise ValueError(f"Unsupported database type: {connection_data['type']}")
+    cleaned_data = {}
+    for key, value in connection_data.items():
+        if isinstance(value, str):
+            cleaned_data[key] = value.strip()
+        else:
+            cleaned_data[key] = value
 
-    existing = next((c for c in connections if c.get("id") == connection_data.get("id")), None)
+    connections = load_connections()
+    if cleaned_data["type"] not in SUPPORTED_DB_TYPES:
+        raise ValueError(f"Unsupported database type: {cleaned_data['type']}")
+
+    existing = next((c for c in connections if c.get("id") == cleaned_data.get("id")), None)
     if existing:
         existing.update({
-            "name": connection_data["name"],
-            "type": connection_data["type"],
-            "host": connection_data["host"],
-            "port": connection_data["port"],
-            "database": connection_data["database"],
-            "username": connection_data["username"],
-            "password": connection_data["password"],
-            "schema": connection_data.get("schema", "public"),
+            "name": cleaned_data["name"],
+            "type": cleaned_data["type"],
+            "host": cleaned_data["host"],
+            "port": cleaned_data["port"],
+            "database": cleaned_data["database"],
+            "username": cleaned_data["username"],
+            "password": cleaned_data["password"],
+            "schema": cleaned_data.get("schema", "public"),
             "updated_at": datetime.utcnow().isoformat(),
         })
     else:
         new_connection = {
-            "id": connection_data.get("id") or str(uuid.uuid4()),
-            "name": connection_data["name"],
-            "type": connection_data["type"],
-            "host": connection_data["host"],
-            "port": connection_data["port"],
-            "database": connection_data["database"],
-            "username": connection_data["username"],
-            "password": connection_data["password"],
-            "schema": connection_data.get("schema", "public"),
+            "id": cleaned_data.get("id") or str(uuid.uuid4()),
+            "name": cleaned_data["name"],
+            "type": cleaned_data["type"],
+            "host": cleaned_data["host"],
+            "port": cleaned_data["port"],
+            "database": cleaned_data["database"],
+            "username": cleaned_data["username"],
+            "password": cleaned_data["password"],
+            "schema": cleaned_data.get("schema", "public"),
             "created_at": datetime.utcnow().isoformat(),
         }
         connections.append(new_connection)

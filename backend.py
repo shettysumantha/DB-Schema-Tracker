@@ -40,6 +40,12 @@ class DatabaseConnectionCreate(BaseModel):
     password: str = Field(..., min_length=1)
     schema: str = Field(default="public")
 
+    @validator("name", "host", "database", "username", "password", "schema", pre=True)
+    def strip_whitespace(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            return value.strip()
+        return value
+
     @validator("type")
     def validate_db_type(cls, value: str) -> str:
         if value.lower() != "postgresql":
