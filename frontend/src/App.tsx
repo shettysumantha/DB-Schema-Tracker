@@ -4,12 +4,13 @@ import {
   testConnection,
   saveConnection,
   deleteConnection,
+  connectDatabase,
+  disconnectDatabase,
   searchTables,
   getTableSchema,
   uploadDocumentation,
   documentSingleTable,
   listJobs,
-  downloadJobUrl,
   publishGoogleSheet,
 } from "./services/api";
 
@@ -21,7 +22,9 @@ interface Connection {
   port: number;
   database: string;
   schema: string;
-  created_at: string;
+  is_connected?: boolean;
+  status?: string;
+  created_at?: string;
 }
 
 interface TableColumn {
@@ -47,20 +50,24 @@ interface JobSummary {
   not_found_list: string[];
 }
 
+const emptyForm = {
+  id: "",
+  name: "",
+  type: "postgresql",
+  host: "",
+  port: 5432,
+  database: "",
+  username: "",
+  password: "",
+  schema: "public",
+};
+
 function App() {
   const [connections, setConnections] = useState<Connection[]>([]);
   const [selectedConnection, setSelectedConnection] = useState<string>("");
   const [showAddDatabase, setShowAddDatabase] = useState(false);
-  const [connectionForm, setConnectionForm] = useState({
-    name: "",
-    type: "postgresql",
-    host: "",
-    port: 5432,
-    database: "",
-    username: "",
-    password: "",
-    schema: "public",
-  });
+  const [editingConnectionId, setEditingConnectionId] = useState<string>("");
+  const [connectionForm, setConnectionForm] = useState(emptyForm);
   const [testStatus, setTestStatus] = useState<string>("");
   const [searchTerm, setSearchTerm] = useState("");
   const [searchResults, setSearchResults] = useState<string[]>([]);
@@ -76,19 +83,61 @@ function App() {
   const [errorMessage, setErrorMessage] = useState<string>("");
   const [downloadLink, setDownloadLink] = useState<string>("");
   const [googleSheetStatus, setGoogleSheetStatus] = useState<string>("");
+  const [showPassword, setShowPassword] = useState(false);
 
   const selectedConnectionMeta = useMemo(
     () => connections.find((item) => item.id === selectedConnection),
     [connections, selectedConnection]
   );
 
-  useEffect(() => {
-    fetchConnections().then((items) => {
-      setConnections(items);
+  const refreshConnections = async () => {
+    try {
+      const items = await fetchConnections();
+      setConnections(items || []);
       if (!selectedConnection && items.length > 0) {
         setSelectedConnection(items[0].id);
       }
+      if (selectedConnection) {
+        const exists = items.some((item: Connection) => item.id === selectedConnection);
+        if (!exists) {
+          setSelectedConnection(items[0]?.id || "");
+        }
+      }
+    } catch {
+      setErrorMessage("Unable to refresh saved database connections.");
+    }
+  };
+
+  const openAddModal = () => {
+    setEditingConnectionId("");
+    setConnectionForm({ ...emptyForm, schema: "public" });
+    setTestStatus("");
+    setErrorMessage("");
+    setShowPassword(false);
+    setShowAddDatabase(true);
+  };
+
+  const openEditModal = (connection: Connection) => {
+    setEditingConnectionId(connection.id);
+    setConnectionForm({
+      id: connection.id,
+      name: connection.name,
+      type: connection.type || "postgresql",
+      host: connection.host,
+      port: Number(connection.port || 5432),
+      database: connection.database,
+      username: "",
+      password: "",
+      schema: connection.schema || "public",
     });
+    setTestStatus("");
+    setErrorMessage("");
+    setShowPassword(false);
+    setShowAddDatabase(true);
+  };
+
+  useEffect(() => {
+    refreshConnections();
     listJobs().then((data) => setJobs(data.jobs || []));
   }, []);
 
@@ -107,37 +156,91 @@ function App() {
     return () => window.clearTimeout(timer);
   }, [searchTerm, selectedConnection]);
 
-  const refreshConnections = () => {
-    fetchConnections().then((items) => {
-      setConnections(items);
-      if (!selectedConnection && items.length > 0) {
-        setSelectedConnection(items[0].id);
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && showAddDatabase) {
+        setShowAddDatabase(false);
       }
-    });
-  };
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [showAddDatabase]);
 
   const handleTestConnection = async () => {
+    const payload = { ...connectionForm, username: connectionForm.username || "", password: connectionForm.password || "" };
+    if (!payload.name || !payload.host || !payload.database || !payload.username || !payload.schema) {
+      setTestStatus("✕ Please complete all required fields before testing.");
+      return;
+    }
+
     setTestStatus("Testing connection...");
     try {
-      await testConnection(connectionForm);
-      setTestStatus("✓ Database connection successful");
-    } catch {
-      setTestStatus("✕ Unable to connect to database. Please verify the connection details.");
+      await testConnection(payload);
+      setTestStatus("✓ Connection successful");
+    } catch (error: any) {
+      const message = error?.message || "Connection failed";
+      setTestStatus(`✕ ${message}`);
     }
   };
 
   const handleSaveConnection = async () => {
+    const payload = { ...connectionForm };
+    const required = [payload.name, payload.host, payload.database, payload.username, payload.schema];
+    if (required.some((value) => !String(value || "").trim())) {
+      setErrorMessage("Please complete all required fields before saving.");
+      return;
+    }
+
     setTestStatus("Saving connection...");
+    setErrorMessage("");
     try {
-      const result = await saveConnection(connectionForm);
-      setConnections((prev) => [...prev, result]);
-      setSelectedConnection(result.id);
+      const result = await saveConnection(payload);
+      const nextConnections = await fetchConnections();
+      setConnections(nextConnections || []);
+      setSelectedConnection(result.id || payload.id || nextConnections[0]?.id || "");
       setShowAddDatabase(false);
-      setConnectionForm({ name: "", type: "postgresql", host: "", port: 5432, database: "", username: "", password: "", schema: "public" });
+      setConnectionForm({ ...emptyForm, schema: "public" });
+      setEditingConnectionId("");
       setTestStatus("");
     } catch (error: any) {
-      setErrorMessage(error?.message || "Unable to save database connection.");
       setTestStatus("");
+      setErrorMessage(error?.message || "Unable to save database connection.");
+    }
+  };
+
+  const handleDeleteConnection = async (connectionId: string, name: string) => {
+    const confirmed = window.confirm(`Delete Database Connection?\n\nAre you sure you want to remove "${name}"?\nThis will remove the saved connection configuration. It will not delete the actual PostgreSQL database.`);
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      await deleteConnection(connectionId);
+      const nextConnections = await fetchConnections();
+      setConnections(nextConnections || []);
+      if (selectedConnection === connectionId) {
+        setSelectedConnection(nextConnections[0]?.id || "");
+      }
+    } catch (error: any) {
+      setErrorMessage(error?.message || "Unable to delete the selected database connection.");
+    }
+  };
+
+  const handleConnectDisconnect = async (connectionId: string, isConnected: boolean) => {
+    try {
+      if (isConnected) {
+        const result = await disconnectDatabase(connectionId);
+        const nextConnections = await fetchConnections();
+        setConnections(nextConnections || []);
+        if (selectedConnection === connectionId) setSelectedConnection(result.id || connectionId);
+      } else {
+        const result = await connectDatabase(connectionId);
+        const nextConnections = await fetchConnections();
+        setConnections(nextConnections || []);
+        setSelectedConnection(result.id || connectionId);
+      }
+    } catch (error: any) {
+      setErrorMessage(error?.message || "Unable to update database connection status.");
     }
   };
 
@@ -207,16 +310,27 @@ function App() {
           <h1>Schema documentation portal</h1>
           <p>Manage database connections, search tables, and generate schema documentation.</p>
         </div>
-        <button className="primary-button" onClick={() => setShowAddDatabase(true)}>
+        <button className="primary-button" onClick={openAddModal}>
           + Add Database
         </button>
       </header>
 
       <section className="panel">
-        <div className="panel-grid">
+        <div className="section-header">
           <div>
+            <p className="eyebrow">Database Connections</p>
+            <h2>Manage saved database connections</h2>
+          </div>
+          <div className="inline-actions">
+            <button className="secondary-button" onClick={refreshConnections}>Refresh Connections</button>
+          </div>
+        </div>
+
+        <div className="panel-grid connection-select-row">
+          <div className="form-field full-width">
             <label>Database</label>
             <select value={selectedConnection} onChange={(event) => setSelectedConnection(event.target.value)}>
+              {connections.length === 0 ? <option value="">No saved connections</option> : null}
               {connections.map((conn) => (
                 <option key={conn.id} value={conn.id}>
                   {conn.name}
@@ -224,11 +338,34 @@ function App() {
               ))}
             </select>
           </div>
-          <div className="panel-actions">
-            <button className="secondary-button" onClick={refreshConnections}>
-              Refresh Connections
-            </button>
-          </div>
+        </div>
+
+        <div className="connection-list">
+          {connections.length === 0 ? (
+            <div className="empty-state">No saved database connections yet. Add one to get started.</div>
+          ) : (
+            connections.map((conn) => (
+              <div key={conn.id} className={`connection-card ${selectedConnection === conn.id ? "active" : ""}`}>
+                <div className="connection-card-top">
+                  <div>
+                    <h3>{conn.name}</h3>
+                    <p className="connection-host">{conn.host}:{conn.port}</p>
+                    <p className="connection-meta">Database: {conn.database} • Schema: {conn.schema}</p>
+                  </div>
+                  <span className={`status-pill ${conn.is_connected ? "connected" : "disconnected"}`}>
+                    {conn.is_connected ? "● Connected" : "○ Disconnected"}
+                  </span>
+                </div>
+                <div className="connection-card-actions">
+                  <button className="secondary-button small-button" onClick={() => handleConnectDisconnect(conn.id, Boolean(conn.is_connected))}>
+                    {conn.is_connected ? "Disconnect" : "Connect"}
+                  </button>
+                  <button className="secondary-button small-button" onClick={() => openEditModal(conn)}>Edit</button>
+                  <button className="secondary-button small-button danger" onClick={() => handleDeleteConnection(conn.id, conn.name)}>Delete</button>
+                </div>
+              </div>
+            ))
+          )}
         </div>
       </section>
 
@@ -385,54 +522,61 @@ function App() {
       {showAddDatabase && (
         <div className="modal-overlay" onClick={() => setShowAddDatabase(false)}>
           <div className="modal" onClick={(event) => event.stopPropagation()}>
-            <h2>Add Database</h2>
+            <button className="close-button" onClick={() => setShowAddDatabase(false)} aria-label="Close add database modal">×</button>
+            <h2>{editingConnectionId ? "Edit Database" : "Add Database"}</h2>
             <div className="form-grid">
-              <label>
-                Database Name
+              <label className="form-field">
+                <span>Database Name</span>
                 <input
                   value={connectionForm.name}
                   onChange={(event) => setConnectionForm({ ...connectionForm, name: event.target.value })}
                 />
               </label>
-              <label>
-                Host
+              <label className="form-field">
+                <span>Host</span>
                 <input
                   value={connectionForm.host}
                   onChange={(event) => setConnectionForm({ ...connectionForm, host: event.target.value })}
                 />
               </label>
-              <label>
-                Port
+              <label className="form-field">
+                <span>Port</span>
                 <input
                   type="number"
                   value={connectionForm.port}
                   onChange={(event) => setConnectionForm({ ...connectionForm, port: Number(event.target.value) })}
                 />
               </label>
-              <label>
-                Database
+              <label className="form-field">
+                <span>Database</span>
                 <input
                   value={connectionForm.database}
                   onChange={(event) => setConnectionForm({ ...connectionForm, database: event.target.value })}
                 />
               </label>
-              <label>
-                Username
+              <label className="form-field">
+                <span>Username</span>
                 <input
                   value={connectionForm.username}
                   onChange={(event) => setConnectionForm({ ...connectionForm, username: event.target.value })}
                 />
               </label>
-              <label>
-                Password
-                <input
-                  type="password"
-                  value={connectionForm.password}
-                  onChange={(event) => setConnectionForm({ ...connectionForm, password: event.target.value })}
-                />
+              <label className="form-field password-field">
+                <span>Password</span>
+                <div className="password-input-wrap">
+                  <input
+                    type={showPassword ? "text" : "password"}
+                    value={connectionForm.password}
+                    placeholder={editingConnectionId ? "Leave blank to keep existing password" : ""}
+                    onChange={(event) => setConnectionForm({ ...connectionForm, password: event.target.value })}
+                  />
+                  <button type="button" className="toggle-password" onClick={() => setShowPassword((prev) => !prev)}>
+                    {showPassword ? "Hide" : "Show"}
+                  </button>
+                </div>
               </label>
-              <label>
-                Schema
+              <label className="form-field full-width">
+                <span>Schema</span>
                 <input
                   value={connectionForm.schema}
                   onChange={(event) => setConnectionForm({ ...connectionForm, schema: event.target.value })}
@@ -440,14 +584,17 @@ function App() {
               </label>
             </div>
             <div className="modal-actions">
+              <button className="secondary-button" onClick={() => setShowAddDatabase(false)}>
+                Cancel
+              </button>
               <button className="secondary-button" onClick={handleTestConnection}>
                 Test Connection
               </button>
               <button className="primary-button" onClick={handleSaveConnection}>
-                Save Database
+                {editingConnectionId ? "Save Changes" : "Save Database"}
               </button>
             </div>
-            {testStatus && <p className="muted">{testStatus}</p>}
+            {testStatus && <p className="muted modal-status">{testStatus}</p>}
           </div>
         </div>
       )}

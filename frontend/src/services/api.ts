@@ -22,10 +22,31 @@ export async function testConnection(connection: any) {
 }
 
 export async function saveConnection(connection: any) {
+  const payload = { ...connection };
+  if (payload.id) {
+    return fetchJson(`${API_BASE}/databases/${encodeURIComponent(payload.id)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+  }
+
   return fetchJson(`${API_BASE}/databases`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(connection),
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function connectDatabase(connectionId: string) {
+  return fetchJson(`${API_BASE}/databases/${encodeURIComponent(connectionId)}/connect`, {
+    method: "PUT",
+  });
+}
+
+export async function disconnectDatabase(connectionId: string) {
+  return fetchJson(`${API_BASE}/databases/${encodeURIComponent(connectionId)}/disconnect`, {
+    method: "PUT",
   });
 }
 
